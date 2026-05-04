@@ -1,12 +1,32 @@
 # handlers.py
 
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CallbackQueryHandler
 from telegram.helpers import escape_markdown
 import logging
 import database.database as db
+from config.config import REQUIRED_CHANNELS, CHANNEL_URLS
 
 logger = logging.getLogger(__name__)
+
+
+async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Foydalanuvchi barcha majburiy kanallarga a'zo ekanligini tekshiradi."""
+    if not REQUIRED_CHANNELS:
+        return True
+        
+    for channel_id in REQUIRED_CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+            logger.info(f"User {user_id} status in {channel_id}: {member.status}")
+            if member.status not in ['creator', 'administrator', 'member', 'restricted']:
+                return False
+        except Exception as e:
+            logger.error(f"Obunani tekshirishda xato ({channel_id}): {e}")
+            # Agar bot kanalni topolmasa yoki admin bo'lmasa, False qaytaradi
+            return False
+            
+    return True
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,6 +103,23 @@ async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 🛑 Majburiy obuna tekshiruvi
+    is_subscribed = await check_subscription(user.id, context)
+    if not is_subscribed:
+        keyboard = []
+        for index, url in enumerate(CHANNEL_URLS, start=1):
+            keyboard.append([InlineKeyboardButton(f"{index} - kanal ↗️", url=url)])
+        
+        keyboard.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_sub")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "Botdan foydalanish uchun ⚠️\n"
+            "Iltimos quyidagi kanallarga obuna bo'ling ‼️",
+            reply_markup=reply_markup
+        )
+        return
+
     try:
         count = db.get_user_stat(user.id, chat.id)
     except Exception as e:
@@ -132,3 +169,34 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{medal} {index}. {display_name} — {count} ta\n"
 
     await update.message.reply_text(text)
+async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'Tekshirish' tugmasi bosilganda ishlaydi."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    await query.answer("Tekshirilmoqda...")
+    
+    is_subscribed = await check_subscription(user_id, context)
+    
+    if is_subscribed:
+        await query.edit_message_text(
+            "Tabriklaymiz! ✅\n"
+            "Siz barcha kanallarga a'zo bo'ldingiz. Endi buyruqlarni qaytadan yuborishingiz mumkin."
+        )
+    else:
+        keyboard = []
+        for index, url in enumerate(CHANNEL_URLS, start=1):
+            keyboard.append([InlineKeyboardButton(f"{index} - kanal ↗️", url=url)])
+        
+        keyboard.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_sub")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            await query.edit_message_text(
+                "Botdan foydalanish uchun ⚠️\n"
+                "Iltimos quyidagi kanallarga obuna bo'ling ‼️\n\n"
+                "❌ Siz hali hamma kanallarga a'zo bo'lmadingiz!",
+                reply_markup=reply_markup
+            )
+        except Exception:
+            pass

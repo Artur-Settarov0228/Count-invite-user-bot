@@ -109,7 +109,9 @@ def add_user(user_id, username, first_name, referrer_id=None):
             cursor.execute("""
                 INSERT INTO users (user_id, username, first_name, referrer_id)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (user_id) DO NOTHING
+                ON CONFLICT (user_id) DO UPDATE 
+                SET username = EXCLUDED.username, 
+                    first_name = EXCLUDED.first_name
             """, (user_id, username, first_name, referrer_id))
         conn.commit()
     finally:

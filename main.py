@@ -1,5 +1,5 @@
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from config.config import BOT_TOKEN
 import database.database as db
 from handlers import handlers
@@ -24,6 +24,7 @@ def main():
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("stat", handlers.stat))
     app.add_handler(CommandHandler("top", handlers.top))
+    app.add_handler(CallbackQueryHandler(handlers.check_sub_callback, pattern="^check_sub$"))
     
     # 4. Yangi odam qo'shilganini tutib oluvchi handler
     # filters.StatusUpdate.NEW_CHAT_MEMBERS aynan guruhga odam qo'shilgan eventni ushlaydi
