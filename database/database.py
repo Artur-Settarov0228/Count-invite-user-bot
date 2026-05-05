@@ -91,6 +91,20 @@ def init_db():
                 )
             """)
 
+            # WITHDRAWALS
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS withdrawals (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    amount TEXT,
+                    details TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                )
+            """)
+
             # INDEXES (tezlik uchun)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_inviter ON invites(inviter_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat ON invites(chat_id)")
@@ -109,7 +123,9 @@ def add_user(user_id, username, first_name, referrer_id=None):
             cursor.execute("""
                 INSERT INTO users (user_id, username, first_name, referrer_id)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (user_id) DO NOTHING
+                ON CONFLICT (user_id) DO UPDATE 
+                SET username = EXCLUDED.username, 
+                    first_name = EXCLUDED.first_name
             """, (user_id, username, first_name, referrer_id))
         conn.commit()
     finally:
@@ -190,6 +206,20 @@ def get_top_inviters(chat_id, limit=10):
                 LIMIT %s
             """, (chat_id, limit))
             return cursor.fetchall()
+    finally:
+        put_connection(conn)
+
+
+# 💸 WITHDRAWAL
+def add_withdrawal_request(user_id, amount, details):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO withdrawals (user_id, amount, details)
+                VALUES (%s, %s, %s)
+            """, (user_id, amount, details))
+        conn.commit()
     finally:
         put_connection(conn)
 

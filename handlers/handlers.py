@@ -1,12 +1,55 @@
 # handlers.py
 
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CallbackQueryHandler, ConversationHandler
 from telegram.helpers import escape_markdown
 import logging
 import database.database as db
+from config.config import REQUIRED_CHANNELS, CHANNEL_URLS
 
 logger = logging.getLogger(__name__)
+
+# Conversation states
+AMOUNT, DETAILS = range(2)
+
+
+async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Foydalanuvchi barcha majburiy kanallarga a'zo ekanligini tekshiradi."""
+    if not REQUIRED_CHANNELS:
+        return True
+        
+    for channel_id in REQUIRED_CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+            logger.info(f"User {user_id} status in {channel_id}: {member.status}")
+            if member.status not in ['creator', 'administrator', 'member', 'restricted']:
+                return False
+        except Exception as e:
+            logger.error(f"Obunani tekshirishda xato ({channel_id}): {e}")
+            # Agar bot kanalni topolmasa yoki admin bo'lmasa, False qaytaradi
+            return False
+            
+    return True
+
+
+async def send_subscription_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchiga obuna bo'lish haqida xabar yuboradi."""
+    keyboard = []
+    for index, url in enumerate(CHANNEL_URLS, start=1):
+        keyboard.append([InlineKeyboardButton(f"{index} - kanal ↗️", url=url)])
+    
+    keyboard.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_sub")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    text = (
+        "Botdan foydalanish uchun ⚠️\n"
+        "Iltimos quyidagi kanallarga obuna bo'ling ‼️"
+    )
+    
+    if update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -17,8 +60,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
 
     if chat_type == 'private':
+        # 🛑 Majburiy obuna tekshiruvi (faqat agar oldin ro'yxatdan o'tgan bo'lsa yoki har doim)
+        # Foydalanuvchi birinchi marta kelsa ham obuna bo'lishini so'raymiz
+        is_subscribed = await check_subscription(user.id, context)
+        
         # userni bazaga qo‘shamiz
         db.add_user(user.id, user.username, user.first_name)
+
+        if not is_subscribed:
+            await update.message.reply_text(
+                f"Salom, {user.first_name}! 🚀\n\n"
+                f"Botdan foydalanish uchun kanallarimizga a'zo bo'lishingiz kerak."
+            )
+            await send_subscription_prompt(update, context)
+            return
 
         await update.message.reply_text(
             f"Salom, {user.first_name}! 🚀\n\n"
@@ -40,8 +95,13 @@ async def track_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inviter = message.from_user
     chat = update.effective_chat
 
-    for new_member in message.new_chat_members:
+    # 1. Guruhni bazaga qo'shamiz (foreign key uchun kerak)
+    db.add_chat(chat.id, chat.title)
+    
+    # 2. Taklif qiluvchini bazaga qo'shamiz
+    db.add_user(inviter.id, inviter.username, inviter.first_name)
 
+    for new_member in message.new_chat_members:
         # botlarni va self-joinni skip qilamiz
         if (
             new_member.is_bot or
@@ -51,15 +111,15 @@ async def track_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
 
         try:
-            # inviterni saqlaymiz
-            db.add_user(inviter.id, inviter.username, inviter.first_name)
+            # 3. Yangi a'zoni bazaga qo'shamiz (foreign key uchun kerak)
+            db.add_user(new_member.id, new_member.username, new_member.first_name)
 
-            # duplicate check (agar funksiya bo‘lsa)
+            # duplicate check
             if hasattr(db, "invite_exists"):
                 if db.invite_exists(inviter.id, new_member.id, chat.id):
                     continue
 
-            # invite qo‘shamiz
+            # 4. Invite qo‘shamiz
             db.add_invite(inviter.id, new_member.id, chat.id)
 
             logger.info(
@@ -83,6 +143,12 @@ async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 🛑 Majburiy obuna tekshiruvi
+    is_subscribed = await check_subscription(user.id, context)
+    if not is_subscribed:
+        await send_subscription_prompt(update, context)
+        return
+
     try:
         count = db.get_user_stat(user.id, chat.id)
     except Exception as e:
@@ -101,12 +167,19 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
+    user = update.effective_user
     chat = update.effective_chat
 
     if chat.type == 'private':
         await update.message.reply_text(
             "Bu buyruq faqat guruhlarda ishlaydi ❌"
         )
+        return
+
+    # 🛑 Majburiy obuna tekshiruvi
+    is_subscribed = await check_subscription(user.id, context)
+    if not is_subscribed:
+        await send_subscription_prompt(update, context)
         return
 
     try:
@@ -121,14 +194,131 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    text = "🏆 Eng ko‘p odam qo‘shganlar:\n\n"
-
+    text = "🏆 *Eng ko‘p odam qo‘shganlar:*\n\n"
     medals = ["🥇", "🥈", "🥉"]
 
-    for index, (name, count) in enumerate(results, start=1):
+    for index, (first_name, username, count) in enumerate(results, start=1):
         medal = medals[index - 1] if index <= 3 else "🔹"
-        display_name = name if name else "Noma'lum"
+        
+        # Ismni escape qilamiz
+        safe_name = escape_markdown(first_name if first_name else "Noma'lum", version=2)
+        
+        text += f"{medal} {index}\\. {safe_name} — *{count}* ta\n"
 
-        text += f"{medal} {index}. {display_name} — {count} ta\n"
+    await update.message.reply_text(text, parse_mode='MarkdownV2')
 
-    await update.message.reply_text(text)
+
+async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'Tekshirish' tugmasi bosilganda ishlaydi."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    await query.answer("Tekshirilmoqda...")
+    
+    is_subscribed = await check_subscription(user_id, context)
+    
+    if is_subscribed:
+        await query.edit_message_text(
+            "Tabriklaymiz! ✅\n"
+            "Siz barcha kanallarga a'zo bo'ldingiz. Endi buyruqlarni qaytadan yuborishingiz mumkin."
+        )
+    else:
+        keyboard = []
+        for index, url in enumerate(CHANNEL_URLS, start=1):
+            keyboard.append([InlineKeyboardButton(f"{index} - kanal ↗️", url=url)])
+        
+        keyboard.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_sub")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            # Matn o'zgarmagan bo'lsa edit_message_text xato beradi, shuning uchun try-except
+            await query.edit_message_text(
+                "Botdan foydalanish uchun ⚠️\n"
+                "Iltimos quyidagi kanallarga obuna bo'ling ‼️\n\n"
+                "❌ Siz hali hamma kanallarga a'zo bo'lmadingiz!",
+                reply_markup=reply_markup
+            )
+        except Exception:
+            pass
+
+
+# 💸 PUL YECHISH (WITHDRAWAL)
+async def money_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pul yechish so'rovini boshlash."""
+    user = update.effective_user
+    
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text("Bu buyruq faqat shaxsiy xabarlarda ishlaydi ❌")
+        return ConversationHandler.END
+
+    # Obuna tekshiruvi
+    is_subscribed = await check_subscription(user.id, context)
+    if not is_subscribed:
+        await send_subscription_prompt(update, context)
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        "💰 *Pul yechish so'rovi*\n\n"
+        "Qancha miqdorda pul yechmoqchisiz?\n"
+        "Masalan: 50000\n\n"
+        "Bekor qilish uchun /cancel buyrug'ini yuboring\\.",
+        parse_mode='MarkdownV2'
+    )
+    return AMOUNT
+
+
+async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Miqdorni qabul qilish."""
+    amount = update.message.text
+    context.user_data['withdraw_amount'] = amount
+    
+    await update.message.reply_text(
+        "💳 *Karta ma'lumotlari*\n\n"
+        "Karta raqamingizni va ism sharifingizni yuboring\\.\n"
+        "Masalan: 8600 0000 0000 0000, Eshmatov Toshmat",
+        parse_mode='MarkdownV2'
+    )
+    return DETAILS
+
+
+async def get_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Karta ma'lumotlarini qabul qilish va saqlash."""
+    from config.config import ADMIN_ID
+    
+    details = update.message.text
+    user = update.effective_user
+    amount = context.user_data.get('withdraw_amount')
+    
+    try:
+        # Bazaga saqlaymiz
+        db.add_withdrawal_request(user.id, amount, details)
+        
+        # Adminga xabar yuboramiz
+        if ADMIN_ID:
+            admin_text = (
+                "🔔 *Yangi pul yechish so'rovi!*\n\n"
+                f"👤 *Foydalanuvchi:* {escape_markdown(user.first_name, version=2)} ([{user.id}](tg://user?id={user.id}))\n"
+                f"💰 *Miqdor:* {escape_markdown(amount, version=2)}\n"
+                f"💳 *Ma'lumotlar:* {escape_markdown(details, version=2)}"
+            )
+            try:
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode='MarkdownV2')
+            except Exception as e:
+                logger.error(f"Adminga xabar yuborishda xato: {e}")
+
+        await update.message.reply_text(
+            "✅ *So'rovingiz qabul qilindi!*\n\n"
+            "Tez orada adminlarimiz ko'rib chiqishadi\\.",
+            parse_mode='MarkdownV2'
+        )
+    except Exception as e:
+        logger.error(f"Pul yechish so'rovini saqlashda xato: {e}")
+        await update.message.reply_text("Xatolik yuz berdi. Iltimos keyinroq urinib ko'ring ❌")
+
+    return ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Suhbatni bekor qilish."""
+    await update.message.reply_text("Amal bekor qilindi ❌")
+    return ConversationHandler.END
