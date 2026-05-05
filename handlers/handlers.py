@@ -9,8 +9,7 @@ from config.config import REQUIRED_CHANNELS, CHANNEL_URLS
 
 logger = logging.getLogger(__name__)
 
-# Conversation states
-AMOUNT, DETAILS = range(2)
+
 
 
 async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -101,6 +100,8 @@ async def track_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2. Taklif qiluvchini bazaga qo'shamiz
     db.add_user(inviter.id, inviter.username, inviter.first_name)
 
+    added_count = 0
+    added_names = []
     for new_member in message.new_chat_members:
         # botlarni va self-joinni skip qilamiz
         if (
@@ -121,6 +122,8 @@ async def track_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # 4. Invite qo‘shamiz
             db.add_invite(inviter.id, new_member.id, chat.id)
+            added_count += 1
+            added_names.append(new_member.first_name if new_member.first_name else "Nomsiz")
 
             logger.info(
                 f"{inviter.id} invited {new_member.id} in {chat.id}"
@@ -128,6 +131,26 @@ async def track_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             logger.error(f"Invite saqlashda xato: {e}")
+            
+    # Agar haqiqatda yangi odam qo'shilgan bo'lsa, adminga xabar beramiz
+    if added_count > 0:
+        from config.config import ADMIN_ID
+        if ADMIN_ID:
+            try:
+                total_invites = db.get_user_stat(inviter.id, chat.id)
+                safe_name = escape_markdown(inviter.first_name if inviter.first_name else "Foydalanuvchi", version=2)
+                added_users_str = escape_markdown(", ".join(added_names), version=2)
+                
+                admin_text = (
+                    f"🔔 *Yangi taklif\\!*\n\n"
+                    f"👤 *Foydalanuvchi:* {safe_name} \\([`{inviter.id}`](tg://user?id={inviter.id})\\)\n"
+                    f"👥 *Guruhga qo'shdi:* {added_count} ta odam\n"
+                    f"🆕 *Qo'shilganlar:* {added_users_str}\n"
+                    f"📊 *Umumiy hisobi:* {total_invites} ta"
+                )
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode='MarkdownV2')
+            except Exception as e:
+                logger.error(f"Adminga taklif xabarini yuborishda xato: {e}")
 
 
 async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -242,83 +265,3 @@ async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
 
-# 💸 PUL YECHISH (WITHDRAWAL)
-async def money_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Pul yechish so'rovini boshlash."""
-    user = update.effective_user
-    
-    if update.effective_chat.type != 'private':
-        await update.message.reply_text("Bu buyruq faqat shaxsiy xabarlarda ishlaydi ❌")
-        return ConversationHandler.END
-
-    # Obuna tekshiruvi
-    is_subscribed = await check_subscription(user.id, context)
-    if not is_subscribed:
-        await send_subscription_prompt(update, context)
-        return ConversationHandler.END
-
-    await update.message.reply_text(
-        "💰 *Pul yechish so'rovi*\n\n"
-        "Qancha miqdorda pul yechmoqchisiz?\n"
-        "Masalan: 50000\n\n"
-        "Bekor qilish uchun /cancel buyrug'ini yuboring\\.",
-        parse_mode='MarkdownV2'
-    )
-    return AMOUNT
-
-
-async def get_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Miqdorni qabul qilish."""
-    amount = update.message.text
-    context.user_data['withdraw_amount'] = amount
-    
-    await update.message.reply_text(
-        "💳 *Karta ma'lumotlari*\n\n"
-        "Karta raqamingizni va ism sharifingizni yuboring\\.\n"
-        "Masalan: 8600 0000 0000 0000, Eshmatov Toshmat",
-        parse_mode='MarkdownV2'
-    )
-    return DETAILS
-
-
-async def get_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Karta ma'lumotlarini qabul qilish va saqlash."""
-    from config.config import ADMIN_ID
-    
-    details = update.message.text
-    user = update.effective_user
-    amount = context.user_data.get('withdraw_amount')
-    
-    try:
-        # Bazaga saqlaymiz
-        db.add_withdrawal_request(user.id, amount, details)
-        
-        # Adminga xabar yuboramiz
-        if ADMIN_ID:
-            admin_text = (
-                "🔔 *Yangi pul yechish so'rovi!*\n\n"
-                f"👤 *Foydalanuvchi:* {escape_markdown(user.first_name, version=2)} ([{user.id}](tg://user?id={user.id}))\n"
-                f"💰 *Miqdor:* {escape_markdown(amount, version=2)}\n"
-                f"💳 *Ma'lumotlar:* {escape_markdown(details, version=2)}"
-            )
-            try:
-                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode='MarkdownV2')
-            except Exception as e:
-                logger.error(f"Adminga xabar yuborishda xato: {e}")
-
-        await update.message.reply_text(
-            "✅ *So'rovingiz qabul qilindi!*\n\n"
-            "Tez orada adminlarimiz ko'rib chiqishadi\\.",
-            parse_mode='MarkdownV2'
-        )
-    except Exception as e:
-        logger.error(f"Pul yechish so'rovini saqlashda xato: {e}")
-        await update.message.reply_text("Xatolik yuz berdi. Iltimos keyinroq urinib ko'ring ❌")
-
-    return ConversationHandler.END
-
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Suhbatni bekor qilish."""
-    await update.message.reply_text("Amal bekor qilindi ❌")
-    return ConversationHandler.END

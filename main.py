@@ -26,16 +26,6 @@ def main():
     app.add_handler(CommandHandler("top", handlers.top))
     app.add_handler(CallbackQueryHandler(handlers.check_sub_callback, pattern="^check_sub$"))
     
-    # 4. Pul yechish (Withdrawal) conversation
-    withdraw_handler = ConversationHandler(
-        entry_points=[CommandHandler("money", handlers.money_start)],
-        states={
-            handlers.AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.get_amount)],
-            handlers.DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.get_details)],
-        },
-        fallbacks=[CommandHandler("cancel", handlers.cancel)],
-    )
-    app.add_handler(withdraw_handler)
 
     # 5. Yangi odam qo'shilganini tutib oluvchi handler
     # filters.StatusUpdate.NEW_CHAT_MEMBERS aynan guruhga odam qo'shilgan eventni ushlaydi
