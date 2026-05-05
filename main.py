@@ -1,63 +1,46 @@
 import logging
+import uvicorn
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
-from config.config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PORT, WEBHOOK_LISTEN, WEBHOOK_SECRET
-import database.database as db
+from config.config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PORT, WEBHOOK_LISTEN
+from fastapi_server import create_app
 from handlers import handlers
 
+# Logging sozlamalari
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-def main():
-    print("Ma'lumotlar bazasi tekshirilmoqda...")
-    try:
-        db.init_db()
-        print("PostgreSQL bazasi tayyor!")
-    except Exception as e:
-        print(f"Baza bilan ulanishda xatolik yuz berdi: {e}")
-        return
+# Telegram Application obyektini yaratish
+bot_app = Application.builder().token(BOT_TOKEN).build()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+# Handlerlarni qo'shish
+bot_app.add_handler(CommandHandler("start", handlers.start))
+bot_app.add_handler(CommandHandler("stat", handlers.stat))
+bot_app.add_handler(CommandHandler("top", handlers.top))
+bot_app.add_handler(CallbackQueryHandler(handlers.check_sub_callback, pattern="^check_sub$"))
 
-    app.add_handler(CommandHandler("start", handlers.start))
-    app.add_handler(CommandHandler("stat", handlers.stat))
-    app.add_handler(CommandHandler("top", handlers.top))
-    app.add_handler(CallbackQueryHandler(handlers.check_sub_callback, pattern="^check_sub$"))
-    
-    # 4. Pul yechish (Withdrawal) conversation
-    withdraw_handler = ConversationHandler(
-        entry_points=[CommandHandler("money", handlers.money_start)],
-        states={
-            handlers.AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.get_amount)],
-            handlers.DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.get_details)],
-        },
-        fallbacks=[CommandHandler("cancel", handlers.cancel)],
-    )
-    app.add_handler(withdraw_handler)
+withdraw_handler = ConversationHandler(
+    entry_points=[CommandHandler("money", handlers.money_start)],
+    states={
+        handlers.AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.get_amount)],
+        handlers.DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.get_details)],
+    },
+    fallbacks=[CommandHandler("cancel", handlers.cancel)],
+)
+bot_app.add_handler(withdraw_handler)
+bot_app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handlers.track_invites))
 
-    # 5. Yangi odam qo'shilganini tutib oluvchi handler
-    # filters.StatusUpdate.NEW_CHAT_MEMBERS aynan guruhga odam qo'shilgan eventni ushlaydi
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handlers.track_invites))
-
-    # 5. Botni ishga tushirish
-    print("Bot muvaffaqiyatli ishga tushdi...")
-
-    if WEBHOOK_URL:
-        # Webhook rejimi
-        print(f"Webhook rejimida ishga tushmoqda: {WEBHOOK_URL}")
-        app.run_webhook(
-            listen=WEBHOOK_LISTEN,
-            port=WEBHOOK_PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
-            secret_token=WEBHOOK_SECRET
-        )
-    else:
-        # Polling rejimi (agar URL berilmagan bo'lsa)
-        print("Polling rejimida ishga tushmoqda...")
-        app.run_polling(drop_pending_updates=True)
+# FastAPI ilovasini yaratish
+app = create_app(bot_app)
 
 if __name__ == '__main__':
-    main()
+    if WEBHOOK_URL:
+        # FastAPI orqali Webhook rejimida ishga tushirish
+        print(f"Bot FastAPI (Webhook) rejimida ishga tushmoqda: {WEBHOOK_URL}")
+        uvicorn.run(app, host=WEBHOOK_LISTEN, port=WEBHOOK_PORT)
+    else:
+        # Agar URL yo'q bo'lsa, Polling rejimida ishga tushirish
+        print("WEBHOOK_URL topilmadi. Polling rejimida ishga tushmoqda...")
+        bot_app.run_polling(drop_pending_updates=True)
