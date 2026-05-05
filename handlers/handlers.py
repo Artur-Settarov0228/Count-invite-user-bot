@@ -9,6 +9,9 @@ from config.config import REQUIRED_CHANNELS, CHANNEL_URLS
 
 logger = logging.getLogger(__name__)
 
+# Conversation states
+AMOUNT, DETAILS = range(2)
+
 
 
 
