@@ -19,7 +19,7 @@ def create_app(bot_app):
         if WEBHOOK_URL:
             # Webhookni Telegramga o'rnatish
             await bot_app.bot.set_webhook(
-                url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
+                url=f"{WEBHOOK_URL}/telegram",
                 secret_token=WEBHOOK_SECRET
             )
             print(f"Webhook o'rnatildi: {WEBHOOK_URL}")
@@ -35,7 +35,7 @@ def create_app(bot_app):
 
     app = FastAPI(lifespan=lifespan)
 
-    @app.post(f"/{BOT_TOKEN}")
+    @app.post(f"/telegram")
     async def process_update(request: Request):
         if WEBHOOK_SECRET:
             token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
