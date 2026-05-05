@@ -14,3 +14,5 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 # Multiple channels support
 REQUIRED_CHANNELS = [c.strip() for c in os.getenv("REQUIRED_CHANNELS", "").split(",") if c.strip()]
 CHANNEL_URLS = [u.strip() for u in os.getenv("CHANNEL_URLS", "").split(",") if u.strip()]
+
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
