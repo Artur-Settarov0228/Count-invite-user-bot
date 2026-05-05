@@ -1,6 +1,6 @@
 import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
-from config.config import BOT_TOKEN
+from config.config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PORT, WEBHOOK_LISTEN, WEBHOOK_SECRET
 import database.database as db
 from handlers import handlers
 
@@ -32,10 +32,22 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handlers.track_invites))
 
     # 5. Botni ishga tushirish
-    print("Bot muvaffaqiyatli ishga tushdi. Telegramdan xabarlar kutilyapti...")
-    
-    # drop_pending_updates=True bot o'chiq vaqtida kelgan eski xabarlarni o'qimasligini ta'minlaydi
-    app.run_polling(drop_pending_updates=True)
+    print("Bot muvaffaqiyatli ishga tushdi...")
+
+    if WEBHOOK_URL:
+        # Webhook rejimi
+        print(f"Webhook rejimida ishga tushmoqda: {WEBHOOK_URL}")
+        app.run_webhook(
+            listen=WEBHOOK_LISTEN,
+            port=WEBHOOK_PORT,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
+            secret_token=WEBHOOK_SECRET
+        )
+    else:
+        # Polling rejimi (agar URL berilmagan bo'lsa)
+        print("Polling rejimida ishga tushmoqda...")
+        app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()

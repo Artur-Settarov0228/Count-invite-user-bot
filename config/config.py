@@ -16,3 +16,9 @@ REQUIRED_CHANNELS = [c.strip() for c in os.getenv("REQUIRED_CHANNELS", "").split
 CHANNEL_URLS = [u.strip() for u in os.getenv("CHANNEL_URLS", "").split(",") if u.strip()]
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
+# Webhook configurations
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", 8443))
+WEBHOOK_LISTEN = os.getenv("WEBHOOK_LISTEN", "0.0.0.0")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
